@@ -1,0 +1,9 @@
+{
+  "name": "the-hidden-hunter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && node scripts/serve.mjs"
+  }
+}
