@@ -22,10 +22,7 @@ const inlineMarkdown = (value = "") => {
 
 const slugFor = (index) => `post-${String(index + 1).padStart(2, "0")}`;
 
-const titleFrom = (filename, markdown) => {
-  const match = markdown.match(/^#\s+(.+)$/m);
-  return match ? match[1].trim() : path.basename(filename, ".md");
-};
+const titleFrom = (filename) => path.basename(filename, ".md");
 
 const dateFrom = (filename, markdown, modifiedAt) => {
   const name = path.basename(filename, ".md");
@@ -160,7 +157,7 @@ const readPosts = async () => {
     posts.push({
       slug: slugFor(index),
       file: entry.name,
-      title: titleFrom(entry.name, markdown),
+      title: titleFrom(entry.name),
       date: dateFrom(entry.name, markdown, fileStat.mtime),
       html: renderBlocks(markdown)
     });
@@ -182,8 +179,10 @@ const writeSite = async () => {
       ${posts
         .map(
           (post) => `<li>
-        <a href="/posts/${post.slug}/">${escapeHtml(post.title)}</a>
-        <time datetime="${post.date}">${post.date}</time>
+        <a href="/posts/${post.slug}/">
+          <span>${escapeHtml(post.title)}</span>
+          <time datetime="${post.date}">${post.date}</time>
+        </a>
       </li>`
         )
         .join("\n")}
@@ -295,14 +294,14 @@ h3 {
 }
 
 .post-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
   border-top: 1px solid var(--line);
-  padding-top: 18px;
 }
 
 .post-list a {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 0 0;
   text-decoration: none;
 }
 
@@ -369,7 +368,7 @@ pre {
     padding-top: 96px;
   }
 
-  .post-list li {
+  .post-list a {
     display: grid;
     gap: 4px;
   }
