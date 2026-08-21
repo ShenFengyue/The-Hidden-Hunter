@@ -274,3 +274,59 @@ test("sitemap.xml includes the homepage and every post", async () => {
     await cleanup(dir);
   }
 });
+
+test("post pages show the date as styled metadata and strip date-only body lines", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    const links = [...home.matchAll(/href="(\/posts\/[a-z0-9]{8}\/)"/g)].map((m) => m[1]);
+
+    for (const href of links) {
+      const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
+      assert.match(postHtml, /<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">\d{4}-\d{2}-\d{2}<\/time><\/p>/);
+      assert.equal((postHtml.match(/class="post-date"/g) || []).length, 1, `${href} has one date line`);
+      assert.ok(!/<p>20\d{6}<\/p>/.test(postHtml), `${href} keeps a compact date paragraph`);
+      assert.ok(!/<p>\d{4}年\d{1,2}月\d{1,2}日<\/p>/.test(postHtml), `${href} keeps a zh date paragraph`);
+    }
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("homepage titles have date prefixes stripped", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    assert.match(home, /<span>夜晚<\/span>/);
+    assert.match(home, /<span>夜晚，又一个刷短视频的夜晚<\/span>/);
+    assert.ok(!home.includes("20260819 夜晚"));
+    assert.ok(!home.includes("2026年8月20日夜晚，又一个刷短视频的夜晚"));
+
+    const nightHref = home.match(/href="(\/posts\/[a-z0-9]{8}\/)">\s*<span>夜晚<\/span>/)[1];
+    const nightPage = await readFile(path.join(dir, "public", nightHref, "index.html"), "utf8");
+    assert.match(nightPage, /<h1>夜晚<\/h1>/);
+    assert.match(nightPage, /<p class="post-date"><time datetime="2026-08-19">/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("styles define a heading hierarchy, sans-serif UI font and an accent color", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const css = await readFile(path.join(dir, "public", "style.css"), "utf8");
+    assert.match(css, /--accent:/);
+    assert.match(css, /--sans:/);
+    assert.match(css, /font-family: var\(--sans\);/);
+    assert.match(css, /h1 \{\s*font-family: var\(--sans\);/);
+    assert.match(css, /font-size: 26px;/);
+    assert.match(css, /font-size: 20px;/);
+    assert.match(css, /\.progress \{\s*[^}]*background: var\(--accent\);/s);
+    assert.match(css, /\.post-date \{/);
+  } finally {
+    await cleanup(dir);
+  }
+});

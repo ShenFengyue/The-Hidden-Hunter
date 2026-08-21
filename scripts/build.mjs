@@ -41,6 +41,9 @@ const stripEntities = (value) =>
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"');
 
+const stripDatePrefix = (value = "") =>
+  String(value).replace(/^(20\d{6}|20\d{2}年\d{1,2}月\d{1,2}日)\s*/, "");
+
 const excerptFrom = (html, title) => {
   const paragraphs = [...html.matchAll(/<p>(.*?)<\/p>/g)]
     .map((match) => stripEntities(match[1]).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
@@ -158,7 +161,7 @@ const inlineMarkdown = (value = "") => {
   return html;
 };
 
-const titleFrom = (filename) => path.basename(filename, ".md");
+const titleFrom = (filename) => stripDatePrefix(path.basename(filename, ".md"));
 
 const dateFrom = (filename, markdown, modifiedAt) => {
   const name = path.basename(filename, ".md");
@@ -184,11 +187,18 @@ const renderBlocks = (markdown) => {
   let list = [];
   let inCode = false;
   let code = [];
+  let paragraphEmitted = false;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    html.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+    const text = paragraph.join(" ");
+    if (!paragraphEmitted && /^(20\d{6}|\d{4}年\d{1,2}月\d{1,2}日)$/.test(text)) {
+      paragraph = [];
+      return;
+    }
+    html.push(`<p>${inlineMarkdown(text)}</p>`);
     paragraph = [];
+    paragraphEmitted = true;
   };
 
   const flushList = () => {
@@ -264,6 +274,15 @@ const renderBlocks = (markdown) => {
   return html.join("\n");
 };
 
+const stripTitleBlocks = (html, title) => {
+  let cleaned = html.replace(/^\s*<h1>.*?<\/h1>\s*/, "");
+  const match = cleaned.match(/^\s*<p>(.*?)<\/p>/);
+  if (match && stripDatePrefix(stripEntities(match[1]).replace(/<[^>]+>/g, "").trim()) === title) {
+    cleaned = cleaned.slice(match.index + match[0].length).trimStart();
+  }
+  return cleaned;
+};
+
 const layout = ({ title, description = "", body, ogTitle = title, path = "/", type = "website" }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -311,11 +330,12 @@ const readPosts = async () => {
     const entry = rootMarkdown[index];
     const file = path.join(root, entry.name);
     const [markdown, fileStat] = await Promise.all([readFile(file, "utf8"), stat(file)]);
+    const title = titleFrom(entry.name);
     posts.push({
       file: entry.name,
-      title: titleFrom(entry.name),
+      title,
       date: dateFrom(entry.name, markdown, fileStat.mtime),
-      html: renderBlocks(markdown)
+      html: stripTitleBlocks(renderBlocks(markdown), title)
     });
   }
 
@@ -426,6 +446,8 @@ const writeSite = async () => {
     const postBody = `<main class="post">
       <nav><a href="/">← 返回</a></nav>
       <article>
+        <h1>${escapeHtml(post.title)}</h1>
+        <p class="post-date"><time datetime="${post.date}">${post.date}</time></p>
         ${post.html}
       </article>
       <nav class="post-nav">
@@ -510,6 +532,8 @@ const writeSite = async () => {
   --line: #e8e8e8;
   --bg: #fff;
   --quote: #444;
+  --sans: ui-sans-serif, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --accent: #a84b32;
 }
 
 * {
@@ -532,7 +556,7 @@ a {
 
 a:focus-visible,
 button:focus-visible {
-  outline: 2px solid var(--muted);
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -581,27 +605,35 @@ blockquote {
 }
 
 h1 {
-  font-size: 22px;
-  font-weight: 400;
-  line-height: 1.5;
+  font-family: var(--sans);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.home h1 {
+  font-size: 28px;
 }
 
 h2 {
   margin-top: 42px;
-  font-size: 18px;
-  font-weight: 400;
+  font-family: var(--sans);
+  font-size: 20px;
+  font-weight: 500;
 }
 
 h3 {
   margin-top: 32px;
-  font-size: 16px;
-  font-weight: 400;
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .site-tagline {
   margin: -12px 0 0;
   color: var(--muted);
   font-size: 15px;
+  font-family: var(--sans);
 }
 
 .post-list {
@@ -641,11 +673,16 @@ h3 {
   transform: translateX(3px);
 }
 
+.post-list a:hover time {
+  color: var(--accent);
+}
+
 time,
 nav {
   color: var(--muted);
   font-size: 14px;
   white-space: nowrap;
+  font-family: var(--sans);
 }
 
 nav {
@@ -669,6 +706,7 @@ nav {
 
 .post-nav a:hover {
   text-decoration: underline;
+  color: var(--accent);
 }
 
 .post-nav .next {
@@ -686,12 +724,18 @@ blockquote {
   font-size: 17px;
 }
 
+.post-date {
+  color: var(--accent);
+  font-size: 14px;
+  font-family: var(--sans);
+}
+
 ul {
   padding-left: 1.25em;
 }
 
 blockquote {
-  border-left: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
   color: var(--quote);
   padding-left: 18px;
 }
@@ -720,7 +764,7 @@ pre {
   left: 0;
   right: 0;
   height: 3px;
-  background: var(--text);
+  background: var(--accent);
   transform: scaleX(0);
   transform-origin: 0 50%;
   z-index: 20;
@@ -742,12 +786,13 @@ pre {
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
+  font-family: var(--sans);
   transition: color 0.18s ease, border-color 0.18s ease;
 }
 
 .theme-toggle:hover {
-  color: var(--text);
-  border-color: var(--muted);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .theme-toggle svg {
@@ -770,6 +815,7 @@ pre {
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
+  font-family: var(--sans);
   opacity: 0;
   transform: translateY(6px);
   pointer-events: none;
@@ -783,8 +829,8 @@ pre {
 }
 
 .back-to-top:hover {
-  color: var(--text);
-  border-color: var(--muted);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .back-to-top svg {
@@ -813,6 +859,7 @@ pre {
     --line: #2a2927;
     --bg: #121212;
     --quote: #b8b5b0;
+    --accent: #d97757;
   }
 }
 
@@ -823,6 +870,7 @@ pre {
   --line: #2a2927;
   --bg: #121212;
   --quote: #b8b5b0;
+  --accent: #d97757;
 }
 
 :root[data-theme="light"] {
