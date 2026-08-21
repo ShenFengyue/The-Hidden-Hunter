@@ -1,9 +1,21 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 
 const root = process.cwd();
 const outDir = path.join(root, "public");
 const siteTitle = "Grayson Shen的个人博客";
+const siteTagline = "记录生活、情绪与思考的个人日志";
+const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+const newId = () => {
+  const bytes = randomBytes(8);
+  let id = "";
+  for (let index = 0; index < 8; index += 1) {
+    id += idAlphabet[bytes[index] % idAlphabet.length];
+  }
+  return id;
+};
 
 const escapeHtml = (value = "") =>
   String(value)
@@ -19,8 +31,6 @@ const inlineMarkdown = (value = "") => {
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2">$1</a>');
   return html;
 };
-
-const slugFor = (index) => `post-${String(index + 1).padStart(2, "0")}`;
 
 const titleFrom = (filename) => path.basename(filename, ".md");
 
@@ -155,7 +165,6 @@ const readPosts = async () => {
     const file = path.join(root, entry.name);
     const [markdown, fileStat] = await Promise.all([readFile(file, "utf8"), stat(file)]);
     posts.push({
-      slug: slugFor(index),
       file: entry.name,
       title: titleFrom(entry.name),
       date: dateFrom(entry.name, markdown, fileStat.mtime),
@@ -168,12 +177,70 @@ const readPosts = async () => {
 
 const writeSite = async () => {
   const posts = await readPosts();
+
+  const idsFile = path.join(root, "post-ids.json");
+  let ids = {};
+  try {
+    ids = JSON.parse(await readFile(idsFile, "utf8"));
+  } catch {
+    ids = {};
+  }
+
+  const usedIds = new Set(Object.values(ids));
+  for (const post of posts) {
+    const current = ids[post.file];
+    const valid = current && /^[a-z0-9]{8}$/.test(current);
+    const duplicate = valid && Object.values(ids).filter((value) => value === current).length > 1;
+    if (!valid || duplicate) {
+      let id;
+      do {
+        id = newId();
+      } while (usedIds.has(id));
+      ids[post.file] = id;
+      usedIds.add(id);
+    }
+  }
+
+  for (const file of Object.keys(ids)) {
+    if (!posts.some((post) => post.file === file)) delete ids[file];
+  }
+
+  await writeFile(idsFile, `${JSON.stringify(ids, null, 2)}\n`, "utf8");
+
+  const legacyFiles = {
+    "post-01": "20260819 夜晚.md",
+    "post-02": "怎么把电脑桌面的文件Git到Github去？.md",
+    "post-03": "未来有多精彩？.md"
+  };
+  const redirects = Object.entries(legacyFiles)
+    .filter(([, file]) => ids[file])
+    .map(([oldSlug, file]) => ({
+      source: `/posts/${oldSlug}/:path*`,
+      destination: `/posts/${ids[file]}/:path*`,
+      permanent: true
+    }));
+
+  const vercelFile = path.join(root, "vercel.json");
+  let vercelConfig = {};
+  try {
+    vercelConfig = JSON.parse(await readFile(vercelFile, "utf8"));
+  } catch {
+    vercelConfig = {};
+  }
+  vercelConfig.redirects = redirects;
+  await writeFile(vercelFile, `${JSON.stringify(vercelConfig, null, 2)}\n`, "utf8");
+
   await rm(outDir, { recursive: true, force: true });
   await mkdir(path.join(outDir, "posts"), { recursive: true });
+
+  for (const post of posts) {
+    post.slug = ids[post.file];
+  }
 
   const indexBody = `<main class="home">
     <header>
       <h1>${escapeHtml(siteTitle)}</h1>
+      <p class="site-tagline">${escapeHtml(siteTagline)}</p>
     </header>
     <ol class="post-list">
       ${posts
@@ -195,7 +262,14 @@ const writeSite = async () => {
     "utf8"
   );
 
-  for (const post of posts) {
+  for (let index = 0; index < posts.length; index += 1) {
+    const post = posts[index];
+    const newer = posts[index - 1];
+    const older = posts[index + 1];
+    const navLinks = [];
+    if (older) navLinks.push(`<a class="prev" href="/posts/${older.slug}/">← 上一篇：${escapeHtml(older.title)}</a>`);
+    if (newer) navLinks.push(`<a class="next" href="/posts/${newer.slug}/">下一篇：${escapeHtml(newer.title)} →</a>`);
+
     const postDir = path.join(outDir, "posts", post.slug);
     await mkdir(postDir, { recursive: true });
     const postBody = `<main class="post">
@@ -203,6 +277,9 @@ const writeSite = async () => {
       <article>
         ${post.html}
       </article>
+      <nav class="post-nav">
+        ${navLinks.join("\n")}
+      </nav>
     </main>`;
     await writeFile(
       path.join(postDir, "index.html"),
@@ -214,11 +291,12 @@ const writeSite = async () => {
   await writeFile(
     path.join(outDir, "style.css"),
     `:root {
-  color-scheme: light;
+  color-scheme: light dark;
   --text: #111;
   --muted: #777;
   --line: #e8e8e8;
   --bg: #fff;
+  --quote: #444;
 }
 
 * {
@@ -285,6 +363,12 @@ h3 {
   font-weight: 400;
 }
 
+.site-tagline {
+  margin: -12px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
 .post-list {
   display: grid;
   gap: 18px;
@@ -320,6 +404,30 @@ nav {
   margin-bottom: 48px;
 }
 
+.post-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 64px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  white-space: normal;
+}
+
+.post-nav a {
+  max-width: 50%;
+  text-decoration: none;
+}
+
+.post-nav a:hover {
+  text-decoration: underline;
+}
+
+.post-nav .next {
+  margin-left: auto;
+  text-align: right;
+}
+
 article h1:first-child {
   margin-bottom: 8px;
 }
@@ -336,7 +444,7 @@ ul {
 
 blockquote {
   border-left: 1px solid var(--line);
-  color: #444;
+  color: var(--quote);
   padding-left: 18px;
 }
 
@@ -358,6 +466,16 @@ pre {
   padding: 18px 0;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e8e6e3;
+    --muted: #9b9996;
+    --line: #2a2927;
+    --bg: #121212;
+    --quote: #b8b5b0;
+  }
+}
+
 @media (max-width: 560px) {
   .home,
   .post {
@@ -371,6 +489,20 @@ pre {
   .post-list a {
     display: grid;
     gap: 4px;
+  }
+
+  .post-nav {
+    display: grid;
+    gap: 10px;
+  }
+
+  .post-nav a {
+    max-width: 100%;
+  }
+
+  .post-nav .next {
+    margin-left: 0;
+    text-align: left;
   }
 }
 `,

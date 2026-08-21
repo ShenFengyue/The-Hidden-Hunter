@@ -1,4 +1,21 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "redirects": [
+    {
+      "source": "/posts/post-01/:path*",
+      "destination": "/posts/oes4usb3/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/posts/post-02/:path*",
+      "destination": "/posts/896wjnrk/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/posts/post-03/:path*",
+      "destination": "/posts/q2f0gi1k/:path*",
+      "permanent": true
+    }
+  ]
 }
