@@ -1,11 +1,13 @@
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { deflateSync } from "node:zlib";
 
 const root = process.cwd();
 const outDir = path.join(root, "public");
 const siteTitle = "Grayson Shen的个人博客";
-const siteTagline = "记录生活、情绪与思考的个人日志";
+const siteTagline = "move fast and break things";
+const siteUrl = "https://shen005.vercel.app";
 const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 const newId = () => {
@@ -23,6 +25,130 @@ const escapeHtml = (value = "") =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+
+const escapeXml = (value = "") =>
+  String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+
+const stripEntities = (value) =>
+  value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"');
+
+const excerptFrom = (html, title) => {
+  const paragraphs = [...html.matchAll(/<p>(.*?)<\/p>/g)]
+    .map((match) => stripEntities(match[1]).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .filter((text) => text && text !== title && !/^(20\d{6}|\d{4}年\d{1,2}月\d{1,2}日)$/.test(text));
+  const first = paragraphs[0] || title;
+  return first.length > 80 ? `${first.slice(0, 80)}…` : first;
+};
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+const crc32 = (buffer) => {
+  let c = 0xffffffff;
+  for (let i = 0; i < buffer.length; i += 1) c = crcTable[(c ^ buffer[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+const pngChunk = (type, data) => {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+};
+
+const encodePng = (width, height, pixels) => {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const stride = width * 4;
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    raw[y * (stride + 1)] = 0;
+    pixels.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  }
+  return Buffer.concat([signature, pngChunk("IHDR", header), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
+};
+
+const makeOgImage = () => {
+  const width = 1200;
+  const height = 630;
+  const pixels = Buffer.alloc(width * height * 4);
+  const cx = width / 2;
+  const cy = height / 2;
+  const put = (x, y, color, alpha) => {
+    const index = (Math.round(y) * width + Math.round(x)) * 4;
+    if (index < 0 || index >= pixels.length) return;
+    pixels[index] = Math.round(color[0] * alpha + pixels[index] * (1 - alpha));
+    pixels[index + 1] = Math.round(color[1] * alpha + pixels[index + 1] * (1 - alpha));
+    pixels[index + 2] = Math.round(color[2] * alpha + pixels[index + 2] * (1 - alpha));
+    pixels[index + 3] = 255;
+  };
+  const ring = (radius, halfWidth, color) => {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const distance = Math.hypot(x - cx, y - cy);
+        const coverage = Math.min(1, Math.max(0, halfWidth - Math.abs(distance - radius)));
+        if (coverage > 0) put(x, y, color, coverage);
+      }
+    }
+  };
+  const segment = (x1, y1, x2, y2, halfWidth, color) => {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const t = Math.min(1, Math.max(0, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
+        const distance = Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy));
+        const coverage = Math.min(1, Math.max(0, halfWidth - distance));
+        if (coverage > 0) put(x, y, color, coverage);
+      }
+    }
+  };
+  const dot = (radius, color) => {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const coverage = Math.min(1, radius - Math.hypot(x - cx, y - cy) + 0.5);
+        if (coverage > 0) put(x, y, color, Math.min(1, coverage));
+      }
+    }
+  };
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    pixels[i] = 0x12;
+    pixels[i + 1] = 0x12;
+    pixels[i + 2] = 0x12;
+    pixels[i + 3] = 255;
+  }
+  segment(cx, 100, cx, 190, 1.5, [0x3a, 0x38, 0x35]);
+  segment(cx, 440, cx, 530, 1.5, [0x3a, 0x38, 0x35]);
+  segment(100, cy, 190, cy, 1.5, [0x3a, 0x38, 0x35]);
+  segment(1010, cy, 1100, cy, 1.5, [0x3a, 0x38, 0x35]);
+  ring(150, 1.5, [0x3a, 0x38, 0x35]);
+  ring(105, 1.5, [0xe8, 0xe6, 0xe3]);
+  dot(5, [0xe8, 0xe6, 0xe3]);
+  return encodePng(width, height, pixels);
+};
 
 const inlineMarkdown = (value = "") => {
   let html = escapeHtml(value);
@@ -138,7 +264,7 @@ const renderBlocks = (markdown) => {
   return html.join("\n");
 };
 
-const layout = ({ title, description = "", body }) => `<!doctype html>
+const layout = ({ title, description = "", body, ogTitle = title, path = "/", type = "website" }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -146,6 +272,16 @@ const layout = ({ title, description = "", body }) => `<!doctype html>
   <meta name="description" content="${escapeHtml(description || siteTitle)}">
   <title>${escapeHtml(title)}</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate" type="application/rss+xml" title="${escapeHtml(siteTitle)}" href="/feed.xml">
+  <link rel="canonical" href="${siteUrl}${path}">
+  <meta property="og:site_name" content="${escapeHtml(siteTitle)}">
+  <meta property="og:title" content="${escapeHtml(ogTitle)}">
+  <meta property="og:description" content="${escapeHtml(description || siteTitle)}">
+  <meta property="og:type" content="${type}">
+  <meta property="og:url" content="${siteUrl}${path}">
+  <meta property="og:image" content="${siteUrl}/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
   <script>
     (function () {
       try {
@@ -269,11 +405,13 @@ const writeSite = async () => {
 
   await writeFile(
     path.join(outDir, "index.html"),
-    layout({ title: siteTitle, description: siteTitle, body: indexBody }),
+    layout({ title: siteTitle, description: siteTagline, body: indexBody, ogTitle: siteTitle }),
     "utf8"
   );
 
   await copyFile(path.join(root, "scripts", "main.js"), path.join(outDir, "main.js"));
+  await copyFile(path.join(root, "scripts", "favicon.svg"), path.join(outDir, "favicon.svg"));
+  await writeFile(path.join(outDir, "og-image.png"), makeOgImage());
 
   for (let index = 0; index < posts.length; index += 1) {
     const post = posts[index];
@@ -296,10 +434,72 @@ const writeSite = async () => {
     </main>`;
     await writeFile(
       path.join(postDir, "index.html"),
-      layout({ title: `${post.title} - ${siteTitle}`, description: post.title, body: postBody }),
+      layout({
+        title: `${post.title} - ${siteTitle}`,
+        description: excerptFrom(post.html, post.title),
+        body: postBody,
+        path: `/posts/${post.slug}/`,
+        ogTitle: post.title,
+        type: "article"
+      }),
       "utf8"
     );
   }
+
+  const feedBody = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>${escapeXml(siteTitle)}</title>
+    <link>${siteUrl}/</link>
+    <description>${escapeXml(siteTagline)}</description>
+    <language>zh-CN</language>
+    ${posts
+      .map(
+        (post) => `<item>
+      <title>${escapeXml(post.title)}</title>
+      <link>${siteUrl}/posts/${post.slug}/</link>
+      <guid isPermaLink="true">${siteUrl}/posts/${post.slug}/</guid>
+      <pubDate>${new Date(`${post.date}T00:00:00Z`).toUTCString()}</pubDate>
+      <description><![CDATA[${post.html.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>
+    </item>`
+      )
+      .join("\n")}
+  </channel>
+</rss>
+`;
+  await writeFile(path.join(outDir, "feed.xml"), feedBody, "utf8");
+
+  const sitemapBody = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${siteUrl}/</loc>
+    <lastmod>${new Date().toISOString().slice(0, 10)}</lastmod>
+  </url>
+  ${posts
+    .map(
+      (post) => `<url>
+    <loc>${siteUrl}/posts/${post.slug}/</loc>
+    <lastmod>${post.date}</lastmod>
+  </url>`
+    )
+    .join("\n")}
+</urlset>
+`;
+  await writeFile(path.join(outDir, "sitemap.xml"), sitemapBody, "utf8");
+
+  const notFoundBody = `<main class="post">
+    <nav><a href="/">← 返回</a></nav>
+    <article>
+      <h1>页面不存在</h1>
+      <p>你访问的页面可能已被移动或删除。</p>
+      <p><a href="/">回到首页</a></p>
+    </article>
+  </main>`;
+  await writeFile(
+    path.join(outDir, "404.html"),
+    layout({ title: `页面不存在 - ${siteTitle}`, description: "页面不存在", body: notFoundBody, ogTitle: "页面不存在" }),
+    "utf8"
+  );
 
   await writeFile(
     path.join(outDir, "style.css"),

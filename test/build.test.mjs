@@ -61,7 +61,7 @@ test("homepage shows the site subtitle under the title", async () => {
     await buildIn(dir);
     const html = await readFile(path.join(dir, "public", "index.html"), "utf8");
     assert.match(html, /class="site-tagline"/);
-    assert.match(html, /记录生活、情绪与思考的个人日志/);
+    assert.match(html, /move fast and break things/);
   } finally {
     await cleanup(dir);
   }
@@ -200,6 +200,76 @@ test("post pages do not annotate the keyboard shortcut in the navigation", async
     const href = home.match(/href="(\/posts\/[a-z0-9]{8}\/)"/)[1];
     const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
     assert.ok(!postHtml.includes("键盘"), "post page must not mention the keyboard shortcut");
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("every page includes favicon, canonical and open graph tags", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    assert.match(home, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg">/);
+    assert.match(home, /<link rel="alternate" type="application\/rss\+xml"[^>]*href="\/feed\.xml">/);
+    assert.match(home, /<link rel="canonical" href="https:\/\/shen005\.vercel\.app\/">/);
+    assert.match(home, /<meta property="og:site_name" content="Grayson Shen的个人博客">/);
+    assert.match(home, /<meta property="og:title" content="Grayson Shen的个人博客">/);
+    assert.match(home, /<meta property="og:type" content="website">/);
+    assert.match(home, /<meta property="og:url" content="https:\/\/shen005\.vercel\.app\/">/);
+    assert.match(home, /<meta property="og:image" content="https:\/\/shen005\.vercel\.app\/og-image\.png">/);
+    assert.match(home, /<meta name="twitter:card" content="summary_large_image">/);
+
+    const href = home.match(/href="(\/posts\/[a-z0-9]{8}\/)"/)[1];
+    const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
+    assert.match(postHtml, new RegExp(`<link rel="canonical" href="https://shen005\\.vercel\\.app${href}">`));
+    assert.match(postHtml, /<meta property="og:type" content="article">/);
+    assert.match(postHtml, /<meta property="og:description" content="[^"]+">/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("build ships favicon, cover image, feed, sitemap and 404 page", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    for (const file of ["favicon.svg", "og-image.png", "feed.xml", "sitemap.xml", "404.html"]) {
+      const content = await readFile(path.join(dir, "public", file));
+      assert.ok(content.length > 0, `${file} is empty`);
+    }
+    const notFound = await readFile(path.join(dir, "public", "404.html"), "utf8");
+    assert.match(notFound, /页面不存在/);
+    assert.match(notFound, /href="\/"/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("feed.xml lists every post with absolute links and dates", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const feed = await readFile(path.join(dir, "public", "feed.xml"), "utf8");
+    const markdownCount = (await readdir(repoRoot)).filter((name) => name.toLowerCase().endsWith(".md")).length;
+    assert.match(feed, /<rss version="2\.0">/);
+    assert.equal((feed.match(/<item>/g) || []).length, markdownCount);
+    assert.equal((feed.match(/<link>https:\/\/shen005\.vercel\.app\/posts\/[a-z0-9]{8}\/<\/link>/g) || []).length, markdownCount);
+    assert.match(feed, /<pubDate>[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT<\/pubDate>/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("sitemap.xml includes the homepage and every post", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const sitemap = await readFile(path.join(dir, "public", "sitemap.xml"), "utf8");
+    const markdownCount = (await readdir(repoRoot)).filter((name) => name.toLowerCase().endsWith(".md")).length;
+    assert.match(sitemap, /<urlset[^>]*>/);
+    assert.match(sitemap, /<loc>https:\/\/shen005\.vercel\.app\/<\/loc>/);
+    assert.equal((sitemap.match(/<loc>/g) || []).length, markdownCount + 1);
   } finally {
     await cleanup(dir);
   }
