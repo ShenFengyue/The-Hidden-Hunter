@@ -131,3 +131,76 @@ test("legacy post-01/02/03 links redirect to the new random ids", async () => {
     await cleanup(dir);
   }
 });
+
+test("every page loads main.js and the theme bootstrap script", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    assert.match(home, /<script src="\/main\.js" defer><\/script>/);
+    assert.match(home, /localStorage\.getItem\("theme"\)/);
+    assert.match(home, /data-theme/);
+
+    const href = home.match(/href="(\/posts\/[a-z0-9]{8}\/)"/)[1];
+    const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
+    assert.match(postHtml, /<script src="\/main\.js" defer><\/script>/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("main.js implements theme toggle, progress, back-to-top and keyboard navigation", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const js = await readFile(path.join(dir, "public", "main.js"), "utf8");
+    for (const needle of ["theme-toggle", "back-to-top", "progress", "ArrowLeft", "ArrowRight"]) {
+      assert.ok(js.includes(needle), `main.js missing ${needle}`);
+    }
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("styles support a manual light/dark override in addition to following the system", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const css = await readFile(path.join(dir, "public", "style.css"), "utf8");
+    assert.match(css, /\[data-theme="dark"\]/);
+    assert.match(css, /\[data-theme="light"\]/);
+    assert.match(css, /prefers-color-scheme:\s*dark/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("styles include keyboard focus, reduced-motion, entrance and scroll helper styles", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const css = await readFile(path.join(dir, "public", "style.css"), "utf8");
+    assert.match(css, /:focus-visible/);
+    assert.match(css, /prefers-reduced-motion/);
+    assert.match(css, /@keyframes/);
+    assert.match(css, /\.back-to-top/);
+    assert.match(css, /\.theme-toggle/);
+    assert.match(css, /\.progress/);
+    assert.match(css, /\.post-list a span/);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("post pages do not annotate the keyboard shortcut in the navigation", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    const href = home.match(/href="(\/posts\/[a-z0-9]{8}\/)"/)[1];
+    const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
+    assert.ok(!postHtml.includes("键盘"), "post page must not mention the keyboard shortcut");
+  } finally {
+    await cleanup(dir);
+  }
+});

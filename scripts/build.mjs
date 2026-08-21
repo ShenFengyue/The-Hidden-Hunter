@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -146,6 +146,17 @@ const layout = ({ title, description = "", body }) => `<!doctype html>
   <meta name="description" content="${escapeHtml(description || siteTitle)}">
   <title>${escapeHtml(title)}</title>
   <link rel="stylesheet" href="/style.css">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <script src="/main.js" defer></script>
 </head>
 <body>
   ${body}
@@ -262,6 +273,8 @@ const writeSite = async () => {
     "utf8"
   );
 
+  await copyFile(path.join(root, "scripts", "main.js"), path.join(outDir, "main.js"));
+
   for (let index = 0; index < posts.length; index += 1) {
     const post = posts[index];
     const newer = posts[index - 1];
@@ -317,10 +330,32 @@ a {
   text-underline-offset: 4px;
 }
 
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--muted);
+  outline-offset: 3px;
+}
+
 .home,
 .post {
   width: min(680px, calc(100% - 40px));
   margin: 0 auto;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.home,
+.post {
+  animation: fade-in 0.35s ease-out both;
 }
 
 .home {
@@ -391,6 +426,19 @@ h3 {
 
 .post-list a:hover {
   text-decoration: underline;
+}
+
+.post-list a span {
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.post-list a:hover span {
+  transform: translateX(5px);
+  color: var(--text);
+}
+
+.post-list a:active span {
+  transform: translateX(3px);
 }
 
 time,
@@ -466,14 +514,124 @@ pre {
   padding: 18px 0;
 }
 
+.progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--text);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.back-to-top {
+  position: fixed;
+  right: 14px;
+  bottom: 20px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, color 0.18s ease;
+}
+
+.back-to-top.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.back-to-top:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.back-to-top svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home,
+  .post {
+    animation: none;
+  }
+
+  .post-list a span,
+  .theme-toggle,
+  .back-to-top {
+    transition: none;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --text: #e8e6e3;
     --muted: #9b9996;
     --line: #2a2927;
     --bg: #121212;
     --quote: #b8b5b0;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --text: #e8e6e3;
+  --muted: #9b9996;
+  --line: #2a2927;
+  --bg: #121212;
+  --quote: #b8b5b0;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --text: #111;
+  --muted: #777;
+  --line: #e8e8e8;
+  --bg: #fff;
+  --quote: #444;
 }
 
 @media (max-width: 560px) {
