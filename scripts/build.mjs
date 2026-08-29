@@ -434,8 +434,6 @@ const writeSite = async () => {
 
   for (const post of posts) {
     post.slug = ids[post.file];
-    post.showDate =
-      Boolean(post.date.iso) && post.title.trim().toLowerCase() !== post.date.text.trim().toLowerCase();
   }
 
   const indexBody = `<main class="home">
@@ -447,8 +445,8 @@ const writeSite = async () => {
       ${posts
         .map((post, index) => {
           const dateChanged = index > 0 && posts[index - 1].date.iso !== post.date.iso;
-          const dateHtml = post.showDate
-            ? `<time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time>`
+          const dateHtml = post.date.iso
+            ? `<time datetime="${post.date.iso}">${post.date.iso}</time>`
             : "";
           return `<li${dateChanged ? ' class="date-change"' : ""}>
         <a href="/posts/${post.slug}/">
@@ -485,7 +483,7 @@ const writeSite = async () => {
       <nav><a href="/">← 返回</a></nav>
       <article>
         <h1>${escapeHtml(post.title)}</h1>
-        ${post.showDate ? `<p class="post-date"><time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time></p>` : ""}
+        ${post.date.iso ? `<p class="post-date"><time datetime="${post.date.iso}">${post.date.iso}</time></p>` : ""}
         ${post.html}
       </article>
       <nav class="post-nav">
@@ -683,12 +681,11 @@ h3 {
 }
 
 .post-list li {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 }
 
 .post-list li.date-change {
   margin-top: 34px;
-  border-top-color: var(--muted);
 }
 
 .post-list a {

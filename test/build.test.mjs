@@ -284,8 +284,11 @@ test("post pages show the date found in the title or article as styled metadata"
 
     for (const href of links) {
       const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
-      const dateLines = postHtml.match(/<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">[^<]+<\/time><\/p>/g) || [];
+      const dateLines = postHtml.match(/<p class="post-date"><time datetime="(\d{4}-\d{2}-\d{2})">([^<]+)<\/time><\/p>/g) || [];
       assert.ok(dateLines.length <= 1, `${href} has at most one date line`);
+      for (const line of dateLines) {
+        assert.match(line, /<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">\d{4}-\d{2}-\d{2}<\/time><\/p>/);
+      }
       assert.ok(
         !/<p>(?:20\d{6}|20\d{2}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s*20\d{2}|\d{4}年\d{1,2}月\d{1,2}日)<\/p>/i.test(postHtml),
         `${href} keeps a date-only paragraph`
@@ -296,19 +299,11 @@ test("post pages show the date found in the title or article as styled metadata"
   }
 });
 
-test("homepage finds dates from titles and articles, sorts newest first and spaces date groups", async () => {
+test("homepage displays every found date as ISO, sorts newest first and spaces date groups", async () => {
   const dir = await prepare();
   try {
     await buildIn(dir);
     const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
-    const titleDate = (title) => {
-      const en = title.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})$/i);
-      if (en) {
-        const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-        return `${en[3]}-${String(months[en[1].slice(0, 3).toLowerCase()]).padStart(2, "0")}-${en[2].padStart(2, "0")}`;
-      }
-      return null;
-    };
     const items = [
       ...home.matchAll(
         /<li(\s+class="[^"]*")?>\s*<a href="(\/posts\/[a-z0-9]{8}\/)">\s*<span>([^<]+)<\/span>(?:\s*<time datetime="(\d{4}-\d{2}-\d{2})">([^<]+)<\/time>)?/g
@@ -316,11 +311,17 @@ test("homepage finds dates from titles and articles, sorts newest first and spac
     ].map((m) => ({
       className: m[1] ? m[1].trim() : "",
       title: m[3],
-      date: m[4] ?? titleDate(m[3]),
+      date: m[4] ?? null,
       text: m[5] ?? null
     }));
 
     assert.ok(items.length >= 3, "expected at least 3 posts");
+    for (const item of items) {
+      if (item.date !== null) {
+        assert.equal(item.text, item.date, `date must be displayed as ISO for ${item.title}`);
+        assert.match(item.text, /^\d{4}-\d{2}-\d{2}$/);
+      }
+    }
 
     for (let i = 1; i < items.length; i += 1) {
       const previous = items[i - 1].date ?? "0000-00-00";
@@ -340,9 +341,11 @@ test("homepage finds dates from titles and articles, sorts newest first and spac
     );
     assert.ok(items.some((item) => item.className.includes("date-change")), "expected at least one date group boundary");
 
-    assert.ok(items.some((item) => item.title === "Aug 23, 2026" && item.text === null), "title-only date post must not repeat its date");
-    assert.ok(items.some((item) => item.text === "20260819"), "compact date not displayed as found");
-    assert.ok(items.some((item) => item.text === "2026-08-22"), "ISO date not displayed as found");
+    const titleOnlyDate = items.find((item) => item.title === "Aug 23, 2026");
+    assert.ok(
+      titleOnlyDate && titleOnlyDate.date === "2026-08-23" && titleOnlyDate.text === "2026-08-23",
+      "title-only date posts must still show the ISO date"
+    );
 
     const feed = await readFile(path.join(dir, "public", "feed.xml"), "utf8");
     assert.match(
