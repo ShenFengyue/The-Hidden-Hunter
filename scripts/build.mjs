@@ -208,8 +208,7 @@ const dateFrom = (filename, markdown, modifiedAt) => {
   const fromBody = parseDate(body, true);
   if (fromBody) return fromBody;
 
-  const fallback = modifiedAt.toISOString().slice(0, 10);
-  return { text: fallback, iso: fallback };
+  return { text: null, iso: null, fallbackIso: modifiedAt.toISOString().slice(0, 10) };
 };
 
 const renderBlocks = (markdown) => {
@@ -371,7 +370,8 @@ const readPosts = async () => {
     });
   }
 
-  return posts.sort((a, b) => b.date.iso.localeCompare(a.date.iso) || b.file.localeCompare(a.file, "zh-CN"));
+  const dateKey = (post) => post.date.iso ?? "0000-00-00";
+  return posts.sort((a, b) => dateKey(b).localeCompare(dateKey(a)) || b.file.localeCompare(a.file, "zh-CN"));
 };
 
 const writeSite = async () => {
@@ -434,6 +434,8 @@ const writeSite = async () => {
 
   for (const post of posts) {
     post.slug = ids[post.file];
+    post.showDate =
+      Boolean(post.date.iso) && post.title.trim().toLowerCase() !== post.date.text.trim().toLowerCase();
   }
 
   const indexBody = `<main class="home">
@@ -445,10 +447,13 @@ const writeSite = async () => {
       ${posts
         .map((post, index) => {
           const dateChanged = index > 0 && posts[index - 1].date.iso !== post.date.iso;
+          const dateHtml = post.showDate
+            ? `<time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time>`
+            : "";
           return `<li${dateChanged ? ' class="date-change"' : ""}>
         <a href="/posts/${post.slug}/">
           <span>${escapeHtml(post.title)}</span>
-          <time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time>
+          ${dateHtml}
         </a>
       </li>`;
         })
@@ -480,7 +485,7 @@ const writeSite = async () => {
       <nav><a href="/">← 返回</a></nav>
       <article>
         <h1>${escapeHtml(post.title)}</h1>
-        <p class="post-date"><time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time></p>
+        ${post.showDate ? `<p class="post-date"><time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time></p>` : ""}
         ${post.html}
       </article>
       <nav class="post-nav">
@@ -514,7 +519,7 @@ const writeSite = async () => {
       <title>${escapeXml(post.title)}</title>
       <link>${siteUrl}/posts/${post.slug}/</link>
       <guid isPermaLink="true">${siteUrl}/posts/${post.slug}/</guid>
-      <pubDate>${new Date(`${post.date.iso}T00:00:00Z`).toUTCString()}</pubDate>
+      <pubDate>${new Date(`${post.date.iso ?? post.date.fallbackIso}T00:00:00Z`).toUTCString()}</pubDate>
       <description><![CDATA[${post.html.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>
     </item>`
       )
@@ -534,7 +539,7 @@ const writeSite = async () => {
     .map(
       (post) => `<url>
     <loc>${siteUrl}/posts/${post.slug}/</loc>
-    <lastmod>${post.date.iso}</lastmod>
+    <lastmod>${post.date.iso ?? post.date.fallbackIso}</lastmod>
   </url>`
     )
     .join("\n")}

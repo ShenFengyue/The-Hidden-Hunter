@@ -284,8 +284,8 @@ test("post pages show the date found in the title or article as styled metadata"
 
     for (const href of links) {
       const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
-      assert.match(postHtml, /<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">[^<]+<\/time><\/p>/);
-      assert.equal((postHtml.match(/class="post-date"/g) || []).length, 1, `${href} has one date line`);
+      const dateLines = postHtml.match(/<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">[^<]+<\/time><\/p>/g) || [];
+      assert.ok(dateLines.length <= 1, `${href} has at most one date line`);
       assert.ok(
         !/<p>(?:20\d{6}|20\d{2}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s*20\d{2}|\d{4}年\d{1,2}月\d{1,2}日)<\/p>/i.test(postHtml),
         `${href} keeps a date-only paragraph`
@@ -301,29 +301,55 @@ test("homepage finds dates from titles and articles, sorts newest first and spac
   try {
     await buildIn(dir);
     const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    const titleDate = (title) => {
+      const en = title.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})$/i);
+      if (en) {
+        const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+        return `${en[3]}-${String(months[en[1].slice(0, 3).toLowerCase()]).padStart(2, "0")}-${en[2].padStart(2, "0")}`;
+      }
+      return null;
+    };
     const items = [
       ...home.matchAll(
-        /<li(\s+class="[^"]*")?>\s*<a href="(\/posts\/[a-z0-9]{8}\/)">\s*<span>([^<]+)<\/span>\s*<time datetime="(\d{4}-\d{2}-\d{2})">([^<]+)<\/time>/g
+        /<li(\s+class="[^"]*")?>\s*<a href="(\/posts\/[a-z0-9]{8}\/)">\s*<span>([^<]+)<\/span>(?:\s*<time datetime="(\d{4}-\d{2}-\d{2})">([^<]+)<\/time>)?/g
       )
     ].map((m) => ({
       className: m[1] ? m[1].trim() : "",
       title: m[3],
-      date: m[4],
-      text: m[5]
+      date: m[4] ?? titleDate(m[3]),
+      text: m[5] ?? null
     }));
 
     assert.ok(items.length >= 3, "expected at least 3 posts");
+
     for (let i = 1; i < items.length; i += 1) {
-      assert.ok(items[i - 1].date >= items[i].date, `posts not sorted by date at ${items[i].title}`);
-      if (items[i].date !== items[i - 1].date) {
+      const previous = items[i - 1].date ?? "0000-00-00";
+      const current = items[i].date ?? "0000-00-00";
+      assert.ok(previous >= current, `posts not sorted by date at ${items[i].title}`);
+      if (current !== previous) {
         assert.ok(items[i].className.includes("date-change"), `new date group missing spacing class at ${items[i].title}`);
       }
     }
+    assert.ok(
+      items.filter((item) => item.title === "短句" || item.title === "Git极简用法").every((item) => item.date === null && item.text === null),
+      "undated posts must show no date"
+    );
+    assert.ok(
+      items.findIndex((item) => item.title === "短句") > items.findIndex((item) => item.title === "关于屏蔽垃圾信息"),
+      "undated posts must come after dated posts"
+    );
     assert.ok(items.some((item) => item.className.includes("date-change")), "expected at least one date group boundary");
 
-    assert.ok(items.some((item) => item.text === "Aug 23, 2026"), "English date not displayed as found");
+    assert.ok(items.some((item) => item.title === "Aug 23, 2026" && item.text === null), "title-only date post must not repeat its date");
     assert.ok(items.some((item) => item.text === "20260819"), "compact date not displayed as found");
     assert.ok(items.some((item) => item.text === "2026-08-22"), "ISO date not displayed as found");
+
+    const feed = await readFile(path.join(dir, "public", "feed.xml"), "utf8");
+    assert.match(
+      feed,
+      /<title>Aug 23, 2026<\/title>[\s\S]*?<pubDate>Sun, 23 Aug 2026 00:00:00 GMT<\/pubDate>/,
+      "English date must be parsed into the feed"
+    );
 
     const css = await readFile(path.join(dir, "public", "style.css"), "utf8");
     assert.match(css, /\.post-list li\.date-change\s*\{/);
