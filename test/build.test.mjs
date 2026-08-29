@@ -275,7 +275,7 @@ test("sitemap.xml includes the homepage and every post", async () => {
   }
 });
 
-test("post pages show the date as styled metadata and strip date-only body lines", async () => {
+test("post pages show the date found in the title or article as styled metadata", async () => {
   const dir = await prepare();
   try {
     await buildIn(dir);
@@ -284,11 +284,50 @@ test("post pages show the date as styled metadata and strip date-only body lines
 
     for (const href of links) {
       const postHtml = await readFile(path.join(dir, "public", href, "index.html"), "utf8");
-      assert.match(postHtml, /<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">\d{4}-\d{2}-\d{2}<\/time><\/p>/);
+      assert.match(postHtml, /<p class="post-date"><time datetime="\d{4}-\d{2}-\d{2}">[^<]+<\/time><\/p>/);
       assert.equal((postHtml.match(/class="post-date"/g) || []).length, 1, `${href} has one date line`);
-      assert.ok(!/<p>20\d{6}<\/p>/.test(postHtml), `${href} keeps a compact date paragraph`);
-      assert.ok(!/<p>\d{4}年\d{1,2}月\d{1,2}日<\/p>/.test(postHtml), `${href} keeps a zh date paragraph`);
+      assert.ok(
+        !/<p>(?:20\d{6}|20\d{2}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s*20\d{2}|\d{4}年\d{1,2}月\d{1,2}日)<\/p>/i.test(postHtml),
+        `${href} keeps a date-only paragraph`
+      );
     }
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("homepage finds dates from titles and articles, sorts newest first and spaces date groups", async () => {
+  const dir = await prepare();
+  try {
+    await buildIn(dir);
+    const home = await readFile(path.join(dir, "public", "index.html"), "utf8");
+    const items = [
+      ...home.matchAll(
+        /<li(\s+class="[^"]*")?>\s*<a href="(\/posts\/[a-z0-9]{8}\/)">\s*<span>([^<]+)<\/span>\s*<time datetime="(\d{4}-\d{2}-\d{2})">([^<]+)<\/time>/g
+      )
+    ].map((m) => ({
+      className: m[1] ? m[1].trim() : "",
+      title: m[3],
+      date: m[4],
+      text: m[5]
+    }));
+
+    assert.ok(items.length >= 3, "expected at least 3 posts");
+    for (let i = 1; i < items.length; i += 1) {
+      assert.ok(items[i - 1].date >= items[i].date, `posts not sorted by date at ${items[i].title}`);
+      if (items[i].date !== items[i - 1].date) {
+        assert.ok(items[i].className.includes("date-change"), `new date group missing spacing class at ${items[i].title}`);
+      }
+    }
+    assert.ok(items.some((item) => item.className.includes("date-change")), "expected at least one date group boundary");
+
+    assert.ok(items.some((item) => item.text === "Aug 23, 2026"), "English date not displayed as found");
+    assert.ok(items.some((item) => item.text === "20260819"), "compact date not displayed as found");
+    assert.ok(items.some((item) => item.text === "2026-08-22"), "ISO date not displayed as found");
+
+    const css = await readFile(path.join(dir, "public", "style.css"), "utf8");
+    assert.match(css, /\.post-list li\.date-change\s*\{/);
+    assert.match(css, /margin-top:/);
   } finally {
     await cleanup(dir);
   }

@@ -44,10 +44,45 @@ const stripEntities = (value) =>
 const stripDatePrefix = (value = "") =>
   String(value).replace(/^(20\d{6}|20\d{2}年\d{1,2}月\d{1,2}日)\s*/, "");
 
+const dateOnlyPattern =
+  /^(20\d{6}|20\d{2}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s*20\d{2}|\d{4}年\d{1,2}月\d{1,2}日)$/i;
+
+const monthNumbers = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+};
+
+const parseDate = (text, lineAnchoredCompact = false) => {
+  if (!text) return null;
+
+  const compact = lineAnchoredCompact ? text.match(/^20\d{6}$/m) : text.match(/(20\d{6})/);
+  if (compact) {
+    const value = compact[0];
+    return { text: value, iso: `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` };
+  }
+
+  const iso = text.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (iso) return { text: iso[0], iso: iso[0] };
+
+  const chinese = text.match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);
+  if (chinese) {
+    const [, year, month, day] = chinese;
+    return { text: chinese[0], iso: `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}` };
+  }
+
+  const english = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(20\d{2})/i);
+  if (english) {
+    const month = monthNumbers[english[1].slice(0, 3).toLowerCase()];
+    return { text: english[0], iso: `${english[3]}-${String(month).padStart(2, "0")}-${english[2].padStart(2, "0")}` };
+  }
+
+  return null;
+};
+
 const excerptFrom = (html, title) => {
   const paragraphs = [...html.matchAll(/<p>(.*?)<\/p>/g)]
     .map((match) => stripEntities(match[1]).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
-    .filter((text) => text && text !== title && !/^(20\d{6}|\d{4}年\d{1,2}月\d{1,2}日)$/.test(text));
+    .filter((text) => text && text !== title && !dateOnlyPattern.test(text));
   const first = paragraphs[0] || title;
   return first.length > 80 ? `${first.slice(0, 80)}…` : first;
 };
@@ -165,19 +200,16 @@ const titleFrom = (filename) => stripDatePrefix(path.basename(filename, ".md"));
 
 const dateFrom = (filename, markdown, modifiedAt) => {
   const name = path.basename(filename, ".md");
-  const compact = name.match(/(20\d{6})/);
-  if (compact) return `${compact[1].slice(0, 4)}-${compact[1].slice(4, 6)}-${compact[1].slice(6, 8)}`;
+  const body = markdown.replace(/```[\s\S]*?```/g, "");
 
-  const zhDate = `${name}\n${markdown}`.match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);
-  if (zhDate) {
-    const [, year, month, day] = zhDate;
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-  }
+  const fromTitle = parseDate(name);
+  if (fromTitle) return fromTitle;
 
-  const bodyCompact = markdown.match(/^20\d{6}$/m);
-  if (bodyCompact) return `${bodyCompact[0].slice(0, 4)}-${bodyCompact[0].slice(4, 6)}-${bodyCompact[0].slice(6, 8)}`;
+  const fromBody = parseDate(body, true);
+  if (fromBody) return fromBody;
 
-  return modifiedAt.toISOString().slice(0, 10);
+  const fallback = modifiedAt.toISOString().slice(0, 10);
+  return { text: fallback, iso: fallback };
 };
 
 const renderBlocks = (markdown) => {
@@ -192,7 +224,7 @@ const renderBlocks = (markdown) => {
   const flushParagraph = () => {
     if (!paragraph.length) return;
     const text = paragraph.join(" ");
-    if (!paragraphEmitted && /^(20\d{6}|\d{4}年\d{1,2}月\d{1,2}日)$/.test(text)) {
+    if (!paragraphEmitted && dateOnlyPattern.test(text)) {
       paragraph = [];
       return;
     }
@@ -339,7 +371,7 @@ const readPosts = async () => {
     });
   }
 
-  return posts.sort((a, b) => b.date.localeCompare(a.date) || b.file.localeCompare(a.file, "zh-CN"));
+  return posts.sort((a, b) => b.date.iso.localeCompare(a.date.iso) || b.file.localeCompare(a.file, "zh-CN"));
 };
 
 const writeSite = async () => {
@@ -411,14 +443,15 @@ const writeSite = async () => {
     </header>
     <ol class="post-list">
       ${posts
-        .map(
-          (post) => `<li>
+        .map((post, index) => {
+          const dateChanged = index > 0 && posts[index - 1].date.iso !== post.date.iso;
+          return `<li${dateChanged ? ' class="date-change"' : ""}>
         <a href="/posts/${post.slug}/">
           <span>${escapeHtml(post.title)}</span>
-          <time datetime="${post.date}">${post.date}</time>
+          <time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time>
         </a>
-      </li>`
-        )
+      </li>`;
+        })
         .join("\n")}
     </ol>
   </main>`;
@@ -447,7 +480,7 @@ const writeSite = async () => {
       <nav><a href="/">← 返回</a></nav>
       <article>
         <h1>${escapeHtml(post.title)}</h1>
-        <p class="post-date"><time datetime="${post.date}">${post.date}</time></p>
+        <p class="post-date"><time datetime="${post.date.iso}">${escapeHtml(post.date.text)}</time></p>
         ${post.html}
       </article>
       <nav class="post-nav">
@@ -481,7 +514,7 @@ const writeSite = async () => {
       <title>${escapeXml(post.title)}</title>
       <link>${siteUrl}/posts/${post.slug}/</link>
       <guid isPermaLink="true">${siteUrl}/posts/${post.slug}/</guid>
-      <pubDate>${new Date(`${post.date}T00:00:00Z`).toUTCString()}</pubDate>
+      <pubDate>${new Date(`${post.date.iso}T00:00:00Z`).toUTCString()}</pubDate>
       <description><![CDATA[${post.html.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>
     </item>`
       )
@@ -501,7 +534,7 @@ const writeSite = async () => {
     .map(
       (post) => `<url>
     <loc>${siteUrl}/posts/${post.slug}/</loc>
-    <lastmod>${post.date}</lastmod>
+    <lastmod>${post.date.iso}</lastmod>
   </url>`
     )
     .join("\n")}
@@ -646,6 +679,11 @@ h3 {
 
 .post-list li {
   border-top: 1px solid var(--line);
+}
+
+.post-list li.date-change {
+  margin-top: 34px;
+  border-top-color: var(--muted);
 }
 
 .post-list a {
